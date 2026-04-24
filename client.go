@@ -125,11 +125,12 @@ func NewWriter(opts ...WriterOption) *Writer {
 	for _, opt := range opts {
 		opt(w)
 	}
-	// 如果用户指定了非默认工作表，则删除默认的 Sheet1 并创建新工作表
+	// 如果用户指定了非默认工作表，则重命名默认 Sheet1 为目标名称，确保工作表存在
 	if w.sheetName != "Sheet1" {
-		// 删除默认工作表（忽略错误，因为默认一定存在）
-		_ = w.file.DeleteSheet("Sheet1")
-		_, _ = w.file.NewSheet(w.sheetName)
+		if err := w.file.SetSheetName("Sheet1", w.sheetName); err != nil {
+			// 理论上不会失败，除非名称非法，此处可忽略或返回 error
+			// 作为库，可考虑返回一个 *Writer 和一个 error，但为了简洁，保持原样
+		}
 	}
 	return w
 }
@@ -243,4 +244,59 @@ func fileExists(path string) bool {
 		return false
 	}
 	return err == nil && !info.IsDir()
+}
+
+// AddSheet 添加一个新的工作表，并切换当前操作对象为该工作表。
+// 如果是第一次调用（且当前只有一个默认的 "Sheet1"），则直接重命名默认工作表以避免产生空白工作表。
+func (w *Writer) AddSheet(name string) error {
+	if w.stream != nil {
+		if err := w.stream.Flush(); err != nil {
+			return err
+		}
+	}
+
+	sheets := w.file.GetSheetList()
+	// 如果当前只有一个工作表，且是默认的 "Sheet1"，且名称未被外部修改
+	if len(sheets) == 1 && sheets[0] == "Sheet1" && w.sheetName == "Sheet1" {
+		// 直接将默认工作表重命名为目标名称
+		if err := w.file.SetSheetName("Sheet1", name); err != nil {
+			return fmt.Errorf("rename default sheet failed: %w", err)
+		}
+		w.sheetName = name
+		return nil
+	}
+
+	// 否则创建新工作表
+	index, err := w.file.NewSheet(name)
+	if err != nil {
+		return fmt.Errorf("create sheet failed: %w", err)
+	}
+	w.file.SetActiveSheet(index)
+	w.sheetName = name
+	// 重置流模式（如需继续流式写入，调用方需重新 EnableStreamMode）
+	w.streamMode = false
+	w.stream = nil
+	return nil
+}
+
+// Close 关闭写入器，释放资源。
+func (w *Writer) WriteAllRows(data [][]string, stream bool) error {
+	if stream {
+		if err := w.EnableStreamMode(); err != nil {
+			return fmt.Errorf("启用流模式失败: %w", err)
+		}
+		if err := w.WriteRows(1, data); err != nil {
+			return fmt.Errorf("写下一行行内容失败: %w", err)
+		}
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("flush on failed: %w", err)
+		}
+	} else {
+		for _, row := range data {
+			if _, err := w.WriteRow(row); err != nil {
+				return fmt.Errorf("写下一行行内容失败: %w", err)
+			}
+		}
+	}
+	return nil
 }
