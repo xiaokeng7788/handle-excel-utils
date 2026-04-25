@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -88,4 +89,10 @@ func (it *RowIterator) Columns() ([]string, error) {
 // Close 关闭迭代器。
 func (it *RowIterator) Close() error {
 	return it.rows.Close()
+}
+
+// 辅助函数：判断文件是否存在
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

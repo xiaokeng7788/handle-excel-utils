@@ -271,3 +271,109 @@ func sortKeys(keys []string, numeric bool) {
 		sort.Strings(keys)
 	}
 }
+
+// AppendExcelFiles 将源文件的所有工作表追加到目标文件末尾。
+// 若目标文件不存在则创建；相同名称的工作表会合并行（追加在最后）。
+func AppendExcelFiles(sourcePath, destPath string) error {
+	srcReader, err := OpenReader(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer srcReader.Close()
+
+	// 打开或创建目标写入器
+	var w *Writer
+	if fileExists(destPath) {
+		w, err = NewWriterFromFile(destPath)
+		if err != nil {
+			return err
+		}
+	} else {
+		w, err = NewWriter()
+		if err != nil {
+			return err
+		}
+	}
+	defer w.Close()
+
+	for _, sheet := range srcReader.SheetNames() {
+		rows, err := srcReader.GetRows(sheet)
+		if err != nil {
+			return fmt.Errorf("读取源文件工作表 %s 失败: %w", sheet, err)
+		}
+		// 检查目标文件是否已存在该工作表
+		sheets := w.file.GetSheetList()
+		exists := false
+		for _, s := range sheets {
+			if s == sheet {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			if err := w.AddSheet(sheet); err != nil {
+				return err
+			}
+		}
+		// 确保 Writer 当前操作工作表与目标工作表一致
+		w.sheetName = sheet
+		// 获取当前工作表已有行数（如果存在）
+		existingRows, _ := w.file.GetRows(sheet)
+		startRow := len(existingRows) + 1
+		if err := w.WriteRows(startRow, rows); err != nil {
+			return err
+		}
+	}
+	return w.SaveAs(destPath)
+}
+
+// MergeSheets 将源文件的指定工作表追加到目标文件的指定工作表。
+func MergeSheets(sourcePath, destPath, sourceSheet, destSheet string) error {
+	srcReader, err := OpenReader(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer srcReader.Close()
+
+	rows, err := srcReader.GetRows(sourceSheet)
+	if err != nil {
+		return fmt.Errorf("读取源工作表失败: %w", err)
+	}
+
+	var w *Writer
+	if fileExists(destPath) {
+		w, err = NewWriterFromFile(destPath)
+		if err != nil {
+			return err
+		}
+	} else {
+		w, err = NewWriter()
+		if err != nil {
+			return err
+		}
+	}
+	defer w.Close()
+
+	// 确保目标工作表存在
+	sheets := w.file.GetSheetList()
+	exists := false
+	for _, s := range sheets {
+		if s == destSheet {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		if err := w.AddSheet(destSheet); err != nil {
+			return err
+		}
+	}
+	// 显式设置当前工作表
+	w.sheetName = destSheet
+	existingRows, _ := w.file.GetRows(destSheet)
+	startRow := len(existingRows) + 1
+	if err := w.WriteRows(startRow, rows); err != nil {
+		return err
+	}
+	return w.SaveAs(destPath)
+}
